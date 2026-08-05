@@ -197,6 +197,8 @@ function propagateWinners(matches) {
     changed = false;
     for (const matchId in matches) {
       const match = matches[matchId];
+
+      // 1. Propagate completed match winners to the next match slot
       if (match.status === 'COMPLETED' && match.winner && match.nextMatchId) {
         const nextMatch = matches[match.nextMatchId];
         if (nextMatch) {
@@ -205,6 +207,27 @@ function propagateWinners(matches) {
             nextMatch[targetSlot] = match.winner;
             changed = true;
           }
+        }
+      }
+
+      // 2. Auto-complete any PENDING match that has a BYE player (in ANY round)
+      if (match.status === 'PENDING' && match.playerA && match.playerB) {
+        const aIsBye = match.playerA.isBye;
+        const bIsBye = match.playerB.isBye;
+
+        if (aIsBye && bIsBye) {
+          // Both are BYE: mark completed with a BYE winner to keep propagating
+          match.status = 'COMPLETED';
+          match.winner = match.playerB; // arbitrary, both are BYE
+          changed = true;
+        } else if (aIsBye) {
+          match.status = 'COMPLETED';
+          match.winner = match.playerB;
+          changed = true;
+        } else if (bIsBye) {
+          match.status = 'COMPLETED';
+          match.winner = match.playerA;
+          changed = true;
         }
       }
     }
@@ -394,6 +417,78 @@ app.post('/api/tournament/match/:id/focus', (req, res) => {
   } else {
     db.activeMatchId = id; // Toggle focus on
   }
+
+  writeDB(db);
+  res.json(db);
+});
+
+// Swap players between two matches in the same round (manual bracket formation)
+app.post('/api/tournament/round/:round/swap', (req, res) => {
+  const round = parseInt(req.params.round, 10);
+  const { matchIdA, slotA, matchIdB, slotB } = req.body;
+  // slotA/slotB are 'playerA' or 'playerB'
+
+  const db = readDB();
+
+  const matchA = db.matches[matchIdA];
+  const matchB = db.matches[matchIdB];
+
+  if (!matchA || !matchB) {
+    return res.status(404).json({ error: 'One or both matches not found.' });
+  }
+
+  if (matchA.round !== round || matchB.round !== round) {
+    return res.status(400).json({ error: 'Both matches must be in the specified round.' });
+  }
+
+  // Only allow swaps on PENDING matches
+  if (matchA.status !== 'PENDING' || matchB.status !== 'PENDING') {
+    return res.status(400).json({ error: 'Can only swap players in PENDING matches.' });
+  }
+
+  // Perform the swap
+  const temp = matchA[slotA];
+  matchA[slotA] = matchB[slotB];
+  matchB[slotB] = temp;
+
+  // Re-check for BYE auto-completion after swap
+  propagateWinners(db.matches);
+
+  // Check if tournament is completed
+  const allMatchIds = Object.keys(db.matches);
+  const finalMatch = allMatchIds.find(mId => !db.matches[mId].nextMatchId);
+  if (finalMatch && db.matches[finalMatch].status === 'COMPLETED') {
+    db.status = 'COMPLETED';
+  }
+
+  writeDB(db);
+  res.json(db);
+});
+
+// Manually assign a player to a specific match slot
+app.post('/api/tournament/match/:id/assign', (req, res) => {
+  const { id } = req.params;
+  const { slot, player } = req.body; // slot is 'playerA' or 'playerB', player is a player object or null
+
+  const db = readDB();
+  const match = db.matches[id];
+
+  if (!match) {
+    return res.status(404).json({ error: 'Match not found.' });
+  }
+
+  if (match.status !== 'PENDING') {
+    return res.status(400).json({ error: 'Can only assign players to PENDING matches.' });
+  }
+
+  if (slot !== 'playerA' && slot !== 'playerB') {
+    return res.status(400).json({ error: "Slot must be 'playerA' or 'playerB'." });
+  }
+
+  match[slot] = player;
+
+  // Re-check for BYE auto-completion
+  propagateWinners(db.matches);
 
   writeDB(db);
   res.json(db);
