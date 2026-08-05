@@ -167,14 +167,20 @@ function generateBracketWithSeeding(customSeeding) {
     match.playerA = customSeeding[2 * i] || null;
     match.playerB = customSeeding[2 * i + 1] || null;
 
-    // Check for BYE completions in Round 1
+    // Lógica de definição de vencedores por BYE
     if (match.playerA && match.playerB) {
-      if (match.playerB.isBye) {
-        match.status = 'COMPLETED';
-        match.winner = match.playerA;
-      } else if (match.playerA.isBye) {
+      if (match.playerA.isBye && match.playerB.isBye) {
+        // Se ambos são BYE, o segundo BYE (playerB) vence
         match.status = 'COMPLETED';
         match.winner = match.playerB;
+      } else if (match.playerA.isBye) {
+        // Se apenas playerA é BYE, playerB vence
+        match.status = 'COMPLETED';
+        match.winner = match.playerB;
+      } else if (match.playerB.isBye) {
+        // Se apenas playerB é BYE, playerA vence
+        match.status = 'COMPLETED';
+        match.winner = match.playerA;
       }
     }
   }
